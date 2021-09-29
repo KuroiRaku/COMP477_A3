@@ -58,7 +58,7 @@ void A3Solution::update(){
         Vector2f springForces = calculateSpringForces(joint, joint->get_springs());
 
         // Damping forces changes every second.
-        // However, positional damping forces were given so merely need to multiple with the velocity
+        // However, positional damping forces were given so we merely need to multiple with the velocity
         Vector2f dampingForces = -(m_positional_damping * Vector2f(m_yk[i*4+xVelocity], m_yk[i*4+yVelocity]));
 
         // compute forces for all joints and set
@@ -115,7 +115,7 @@ void A3Solution::explicitEuler(VectorXf& yk, VectorXf& ykPrime){
         // Pretty much explicit Euler lol.
         yk = yk + (ykPrime * this->m_timestep);
 
-        // need to update ykPrime too
+        // Update ykPrime
         for (int i=0; i<this->m_moving_joints.size(); ++i) {
             if (i == selectedIndex) {
                 continue;
@@ -128,7 +128,56 @@ void A3Solution::explicitEuler(VectorXf& yk, VectorXf& ykPrime){
     // For Implicit
     else
     {
+        // y(k+1) = yk + (y k+1 Prime) * m_timeStep
+        // refering to https://stackoverflow.com/questions/3897424/implementing-semi-implicit-backward-euler-in-a-1-dof-mass-spring-system
+        // We need new velocity and new position
+        for (int i=0; i<m_moving_joints.size(); i++){
+            Joint2D* joint = m_moving_joints[i];
+            VectorXf newYK = yk;
 
+            // X k+1
+            newYK[i*4 + xPosition] = yk[i*4 + xPosition] + this->m_timestep* yk[i*4 +xVelocity];
+            newYK[i*4 + yPosition] = yk[i*4 + yPosition] + this->m_timestep* yk[i*4 +yVelocity];
+
+            // Vk+1
+            newYK[i*4 + xVelocity] = yk[i*4 + xVelocity] + this->m_timestep* yk[i*4 +xAccelerationPrime];
+            newYK[i*4 + yVelocity] = yk[i*4 + yVelocity] + this->m_timestep* yk[i*4 +yAccelerationPrime];
+
+            Vector2f newGravitionalForce = - (m_mass * m_gravity * Vector2f::UnitY());
+            Vector2f newSpringForce = calculateSpringForces(joint, joint->get_springs());
+
+            Vector2f newTotalSpringForce = Vector2f(0.0f,0.0f);
+
+            for(Spring2D* spring : joint->get_springs()) {
+                Joint2D* other = spring->get_other_joint(joint);
+                // vector to the joint being pulled
+                Vector2f vecToJoint = Vector2f(newYK[i*4 + xPosition] - other->get_position().x(),-(newYK[i*4 + yPosition] - other->get_position().y()) );
+                // Hooke's Law
+                // F = kx
+                // X = current length - resting length
+                // How do you know the new length?
+                Vector2f force = -1 * this->m_stiffness * (spring->get_length()-spring->get_rest_length()) * vecToJoint.normalized();
+
+                newTotalSpringForce.x() += force.x();
+                newTotalSpringForce.y() += force.y();
+            }
+
+            Vector2f newDampingForce =  -(m_positional_damping * Vector2f(newYK[i*4+xVelocity], newYK[i*4+yVelocity]));
+
+            Vector2f totalForces = newGravitionalForce + newSpringForce + newDampingForce;
+            // f = ma
+            // a = f/m
+            Vector2f totalAcceleration = totalForces / this->m_mass ;
+
+            // Setting yk+1Prime value
+            ykPrime[i*4 +xAccelerationPrime] = totalAcceleration.x();
+            ykPrime[i*4 +yAccelerationPrime] = totalAcceleration.y();
+
+            ykPrime[i*4 +xVelocityPrime] = newYK[i*4 + xVelocity];
+            ykPrime[i*4 +yVelocityPrime] = newYK[i*4 + yVelocity];
+        }
+
+        yk = yk + (ykPrime * this->m_timestep);
     }
 
     // selection of mouse case
